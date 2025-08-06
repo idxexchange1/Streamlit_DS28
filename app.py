@@ -41,7 +41,7 @@ scaler_y = joblib.load("scaler_y.pkl")
 # Initialize model and load weights
 input_size = scaler_X.mean_.shape[0]  # input features = number of columns
 model = HousePriceNN(input_size)
-model.load_state_dict(torch.load("model.pth", map_location=torch.device("cpu")))
+model.load_state_dict(torch.load("model_state_dict.pth", map_location=torch.device("cpu")))
 model.eval()
 
 # Streamlit UI
