@@ -9,74 +9,74 @@ Original file is located at
 
 import streamlit as st
 import torch
-import joblib
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-from geopy.geocoders import Nominatim
+import joblib
 
-# Load model and scalers
-model = torch.load("model.pkl", map_location=torch.device("cpu"))
-model.eval()
+# Define the model class (must match exactly with training)
+class HousePriceNN(nn.Module):
+    def __init__(self, input_size, hidden_sizes=[512, 256, 128, 64], dropout_rate=0.3):
+        super(HousePriceNN, self).__init__()
+        layers = []
+        layers.append(nn.Linear(input_size, hidden_sizes[0]))
+        layers.append(nn.ReLU())
+        layers.append(nn.BatchNorm1d(hidden_sizes[0]))
+        layers.append(nn.Dropout(dropout_rate))
+        for i in range(len(hidden_sizes) - 1):
+            layers.append(nn.Linear(hidden_sizes[i], hidden_sizes[i + 1]))
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(hidden_sizes[i + 1]))
+            layers.append(nn.Dropout(dropout_rate))
+        layers.append(nn.Linear(hidden_sizes[-1], 1))
+        self.network = nn.Sequential(*layers)
 
-scaler_X = joblib.load("scaler_X.pkl")
+    def forward(self, x):
+        return self.network(x)
+
+# Load scalers
+scaler_X = joblib.load("scaler_x.pkl")
 scaler_y = joblib.load("scaler_y.pkl")
 
-st.title("🏠 House Price Predictor - Version 2")
+# Initialize model and load weights
+input_size = scaler_X.mean_.shape[0]  # input features = number of columns
+model = HousePriceNN(input_size)
+model.load_state_dict(torch.load("model.pth", map_location=torch.device("cpu")))
+model.eval()
 
-st.markdown("Enter property address and details to get estimated house price.")
+# Streamlit UI
+st.title("🏡 California House Price Predictor (NN Model)")
 
-# Address input
-address = st.text_input("Enter Property Address")
+# Take user inputs
+living_area = st.number_input("Living Area (sqft)", min_value=200.0, max_value=10000.0)
+bedrooms = st.number_input("Bedrooms", min_value=0, max_value=10)
+bathrooms = st.number_input("Bathrooms", min_value=0, max_value=10)
+lot_size = st.number_input("Lot Size (Acres)", min_value=0.0, max_value=5.0)
+year_built = st.number_input("Year Built", min_value=1900, max_value=2025)
+fireplaces = st.number_input("Fireplaces", min_value=0, max_value=5)
+parking = st.number_input("Total Parking Spaces", min_value=0, max_value=10)
+garage = st.number_input("Garage Spaces", min_value=0, max_value=5)
+stories = st.selectbox("Stories", [1, 2, 3])
+assoc_fee = st.number_input("Association Fee ($)", min_value=0.0)
+dom = st.number_input("Days on Market", min_value=0)
+latitude = st.number_input("Latitude", min_value=32.0, max_value=38.0)
+longitude = st.number_input("Longitude", min_value=-124.0, max_value=-114.0)
 
-if address:
-    geolocator = Nominatim(user_agent="price_predictor")
-    location = geolocator.geocode(address)
-
-    if location:
-        st.success(f"📍 Found location: {location.address}")
-        latitude = location.latitude
-        longitude = location.longitude
-    else:
-        st.error("Address not found. Please try again.")
-        st.stop()
-else:
-    st.stop()
-
-# Input fields
-sqft = st.number_input("Living Area (sqft)", min_value=100, max_value=10000, value=1500)
-beds = st.slider("Bedrooms", min_value=1, max_value=10, value=3)
-baths = st.slider("Bathrooms", min_value=1, max_value=10, value=2)
-lot_size = st.number_input("Lot Size (acres)", min_value=0.01, max_value=5.0, value=0.2)
-year_built = st.slider("Year Built", min_value=1900, max_value=2025, value=2005)
-fireplaces = st.slider("Number of Fireplaces", min_value=0, max_value=5, value=1)
-parking_total = st.slider("Total Parking Spaces", min_value=0, max_value=10, value=2)
-garage_spaces = st.slider("Garage Spaces", min_value=0, max_value=5, value=1)
-stories = st.slider("Stories", min_value=1, max_value=4, value=2)
-association_fee = st.number_input("Association Fee ($)", min_value=0, max_value=3000, value=0)
-days_on_market = st.number_input("Days on Market", min_value=0, max_value=365, value=30)
-
+# On predict
 if st.button("Predict Price"):
-    # Input vector in the same order as training
-    input_data = np.array([[
-        sqft, beds, baths, lot_size, year_built,
-        fireplaces, parking_total, garage_spaces,
-        stories, association_fee, days_on_market,
-        latitude, longitude
-    ]])
+    # Prepare feature vector
+    input_data = np.array([[living_area, bedrooms, bathrooms, lot_size, year_built,
+                            fireplaces, parking, garage, stories, assoc_fee,
+                            dom, latitude, longitude]])
 
-    # Scale input
-    input_scaled = scaler_X.transform(input_data)
-
-    # Convert to tensor
-    input_tensor = torch.FloatTensor(input_scaled)
+    # Scale features
+    X_scaled = scaler_X.transform(input_data)
+    X_tensor = torch.FloatTensor(X_scaled)
 
     # Predict
     with torch.no_grad():
-        prediction_scaled = model(input_tensor).item()
+        y_scaled_pred = model(X_tensor).item()
+        y_pred = scaler_y.inverse_transform([[y_scaled_pred]])[0][0]
 
-    # Inverse transform the prediction
-    predicted_price = scaler_y.inverse_transform([[prediction_scaled]])[0][0]
-
-    st.subheader("🏡 Prediction Result")
-    st.success(f"💵 Estimated Home Price: ${predicted_price:,.2f}")
-    st.markdown(f"📌 Latitude: `{latitude}`  |  Longitude: `{longitude}`")
+    st.success(f"💰 Estimated House Price: ${y_pred:,.2f}")
 
