@@ -35,7 +35,7 @@ class HousePriceNN(nn.Module):
         return self.network(x)
 
 # Load scalers
-scaler_X = joblib.load("scaler_x.pkl")
+scaler_X = joblib.load("scaler_X.pkl")
 scaler_y = joblib.load("scaler_y.pkl")
 
 # Initialize model and load weights
