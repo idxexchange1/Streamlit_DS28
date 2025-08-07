@@ -13,6 +13,8 @@ import torch.nn as nn
 import numpy as np
 import joblib
 import pandas as pd
+from geopy.geocoders import Nominatim
+from geopy.exc import GeocoderUnavailable, GeocoderTimedOut
 
 # Define your NN model class (same as training)
 class HousePriceNN(nn.Module):
@@ -34,10 +36,10 @@ class HousePriceNN(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-# Load scalers and model files
+# Load saved preprocessing tools and model
 scaler_X = joblib.load("scaler_X.pkl")
 scaler_y = joblib.load("scaler_y.pkl")
-feature_columns = joblib.load("feature_columns.pkl")  # List of all features used during training
+feature_columns = joblib.load("feature_columns.pkl")
 
 input_size = len(feature_columns)
 
@@ -45,9 +47,16 @@ model = HousePriceNN(input_size)
 model.load_state_dict(torch.load("model_state_dict.pth", map_location=torch.device("cpu")))
 model.eval()
 
+# App UI
 st.title("🏡 California House Price Predictor (NN Model)")
 
-# Collect user inputs for base features
+st.subheader("📍 Property Address")
+street = st.text_input("Street Address", "123 Main St")
+city = st.text_input("City", "Los Angeles")
+state = st.text_input("State", "CA")
+zipcode = st.text_input("ZIP Code", "90001")
+
+st.subheader("🏠 Property Details")
 living_area = st.number_input("Living Area (sqft)", min_value=200.0, max_value=10000.0, value=1500.0)
 bedrooms = st.number_input("Bedrooms", min_value=0, max_value=10, value=3)
 bathrooms = st.number_input("Bathrooms", min_value=0, max_value=10, value=2)
@@ -57,22 +66,27 @@ fireplaces = st.number_input("Fireplaces", min_value=0, max_value=5, value=1)
 parking = st.number_input("Total Parking Spaces", min_value=0, max_value=10, value=2)
 garage = st.number_input("Garage Spaces", min_value=0, max_value=5, value=1)
 stories = st.selectbox("Stories", [1, 2, 3], index=0)
-assoc_fee = st.number_input("Association Fee ($)", min_value=0.0, value=0.0)
 dom = st.number_input("Days on Market", min_value=0, value=30)
-latitude = st.number_input("Latitude", min_value=32.0, max_value=38.0, value=34.0)
-longitude = st.number_input("Longitude", min_value=-124.0, max_value=-114.0, value=-118.0)
-
-# For any categorical features used during training with one-hot encoding,
-# you should add UI inputs here.
-# Example:
-# city = st.selectbox("City", ["Los Angeles", "San Francisco", "San Diego", ...])
-# county = st.selectbox("County", ["Los Angeles County", "San Diego County", ...])
-# postal_code = st.text_input("Postal Code", "")
-
-# For demo, assume no categorical variables (or all are already numeric and handled)
 
 if st.button("Predict Price"):
-    # Create base input dictionary for your numeric features
+    # Use geopy to get latitude and longitude from address
+    full_address = f"{street}, {city}, {state} {zipcode}"
+    geolocator = Nominatim(user_agent="house-price-predictor")
+    
+    try:
+        location = geolocator.geocode(full_address, timeout=10)
+    except (GeocoderTimedOut, GeocoderUnavailable) as e:
+        st.error(f"Geocoding failed: {e}")
+        st.stop()
+
+    if location is None:
+        st.error("Unable to find the location. Please check the address.")
+        st.stop()
+
+    latitude = location.latitude
+    longitude = location.longitude
+
+    # Prepare input dictionary
     input_dict = {
         'LivingArea': living_area,
         'BedroomsTotal': bedrooms,
@@ -83,43 +97,35 @@ if st.button("Predict Price"):
         'ParkingTotal': parking,
         'GarageSpaces': garage,
         'Stories': stories,
-        'AssociationFee': assoc_fee,
         'DaysOnMarket': dom,
         'Latitude': latitude,
         'Longitude': longitude
     }
 
-    # Build full feature vector including one-hot encoded columns expected by scaler_X
-    # Start with zeros for all features
+    # Initialize full feature vector with zeros
     input_vector = pd.Series(0, index=feature_columns)
 
-    # Fill numeric features
+    # Fill in numeric inputs
     for feature in input_dict:
         if feature in input_vector.index:
             input_vector[feature] = input_dict[feature]
 
-    # TODO: If you have categorical features one-hot encoded during training,
-    # map user input to the correct dummy column(s) here.
-    # For example:
-    # if f"City_{city}" in input_vector.index:
-    #     input_vector[f"City_{city}"] = 1
+    # TODO: Add categorical mappings if needed (e.g. City, County, etc.)
 
-    # Convert to 2D numpy array for scaler
-    input_array = input_vector.values.reshape(1, -1)
-
-    # Scale features
+    # Scale
     try:
+        input_array = input_vector.values.reshape(1, -1)
         X_scaled = scaler_X.transform(input_array)
     except Exception as e:
         st.error(f"Error during feature scaling: {e}")
         st.stop()
 
-    # Convert to tensor and predict
+    # Predict
     X_tensor = torch.FloatTensor(X_scaled)
     with torch.no_grad():
         y_scaled_pred = model(X_tensor).item()
         y_pred = scaler_y.inverse_transform([[y_scaled_pred]])[0][0]
 
+    # Display results
     st.success(f"💰 Estimated House Price: ${y_pred:,.2f}")
-
-
+    st.info(f"📍 Geocoded Coordinates: Latitude {latitude:.6f}, Longitude {longitude:.6f}")
