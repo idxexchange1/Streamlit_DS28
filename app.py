@@ -10,11 +10,11 @@ Original file is located at
 import streamlit as st
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 import joblib
+import pandas as pd
 
-# Define the model class (must match exactly with training)
+# Define your NN model class (same as training)
 class HousePriceNN(nn.Module):
     def __init__(self, input_size, hidden_sizes=[512, 256, 128, 64], dropout_rate=0.3):
         super(HousePriceNN, self).__init__()
@@ -34,49 +34,92 @@ class HousePriceNN(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-# Load scalers
+# Load scalers and model files
 scaler_X = joblib.load("scaler_X.pkl")
 scaler_y = joblib.load("scaler_y.pkl")
+feature_columns = joblib.load("feature_columns.pkl")  # List of all features used during training
 
-# Initialize model and load weights
-input_size = scaler_X.mean_.shape[0]  # input features = number of columns
+input_size = len(feature_columns)
+
 model = HousePriceNN(input_size)
 model.load_state_dict(torch.load("model_state_dict.pth", map_location=torch.device("cpu")))
 model.eval()
 
-# Streamlit UI
 st.title("🏡 California House Price Predictor (NN Model)")
 
-# Take user inputs
-living_area = st.number_input("Living Area (sqft)", min_value=200.0, max_value=10000.0)
-bedrooms = st.number_input("Bedrooms", min_value=0, max_value=10)
-bathrooms = st.number_input("Bathrooms", min_value=0, max_value=10)
-lot_size = st.number_input("Lot Size (Acres)", min_value=0.0, max_value=5.0)
-year_built = st.number_input("Year Built", min_value=1900, max_value=2025)
-fireplaces = st.number_input("Fireplaces", min_value=0, max_value=5)
-parking = st.number_input("Total Parking Spaces", min_value=0, max_value=10)
-garage = st.number_input("Garage Spaces", min_value=0, max_value=5)
-stories = st.selectbox("Stories", [1, 2, 3])
-assoc_fee = st.number_input("Association Fee ($)", min_value=0.0)
-dom = st.number_input("Days on Market", min_value=0)
-latitude = st.number_input("Latitude", min_value=32.0, max_value=38.0)
-longitude = st.number_input("Longitude", min_value=-124.0, max_value=-114.0)
+# Collect user inputs for base features
+living_area = st.number_input("Living Area (sqft)", min_value=200.0, max_value=10000.0, value=1500.0)
+bedrooms = st.number_input("Bedrooms", min_value=0, max_value=10, value=3)
+bathrooms = st.number_input("Bathrooms", min_value=0, max_value=10, value=2)
+lot_size = st.number_input("Lot Size (Acres)", min_value=0.0, max_value=5.0, value=0.25)
+year_built = st.number_input("Year Built", min_value=1900, max_value=2025, value=1980)
+fireplaces = st.number_input("Fireplaces", min_value=0, max_value=5, value=1)
+parking = st.number_input("Total Parking Spaces", min_value=0, max_value=10, value=2)
+garage = st.number_input("Garage Spaces", min_value=0, max_value=5, value=1)
+stories = st.selectbox("Stories", [1, 2, 3], index=0)
+assoc_fee = st.number_input("Association Fee ($)", min_value=0.0, value=0.0)
+dom = st.number_input("Days on Market", min_value=0, value=30)
+latitude = st.number_input("Latitude", min_value=32.0, max_value=38.0, value=34.0)
+longitude = st.number_input("Longitude", min_value=-124.0, max_value=-114.0, value=-118.0)
 
-# On predict
+# For any categorical features used during training with one-hot encoding,
+# you should add UI inputs here.
+# Example:
+# city = st.selectbox("City", ["Los Angeles", "San Francisco", "San Diego", ...])
+# county = st.selectbox("County", ["Los Angeles County", "San Diego County", ...])
+# postal_code = st.text_input("Postal Code", "")
+
+# For demo, assume no categorical variables (or all are already numeric and handled)
+
 if st.button("Predict Price"):
-    # Prepare feature vector
-    input_data = np.array([[living_area, bedrooms, bathrooms, lot_size, year_built,
-                            fireplaces, parking, garage, stories, assoc_fee,
-                            dom, latitude, longitude]])
+    # Create base input dictionary for your numeric features
+    input_dict = {
+        'LivingArea': living_area,
+        'BedroomsTotal': bedrooms,
+        'BathroomsTotalInteger': bathrooms,
+        'LotSizeAcres': lot_size,
+        'YearBuilt': year_built,
+        'FireplacesTotal': fireplaces,
+        'ParkingTotal': parking,
+        'GarageSpaces': garage,
+        'Stories': stories,
+        'AssociationFee': assoc_fee,
+        'DaysOnMarket': dom,
+        'Latitude': latitude,
+        'Longitude': longitude
+    }
+
+    # Build full feature vector including one-hot encoded columns expected by scaler_X
+    # Start with zeros for all features
+    input_vector = pd.Series(0, index=feature_columns)
+
+    # Fill numeric features
+    for feature in input_dict:
+        if feature in input_vector.index:
+            input_vector[feature] = input_dict[feature]
+
+    # TODO: If you have categorical features one-hot encoded during training,
+    # map user input to the correct dummy column(s) here.
+    # For example:
+    # if f"City_{city}" in input_vector.index:
+    #     input_vector[f"City_{city}"] = 1
+
+    # Convert to 2D numpy array for scaler
+    input_array = input_vector.values.reshape(1, -1)
 
     # Scale features
-    X_scaled = scaler_X.transform(input_data)
-    X_tensor = torch.FloatTensor(X_scaled)
+    try:
+        X_scaled = scaler_X.transform(input_array)
+    except Exception as e:
+        st.error(f"Error during feature scaling: {e}")
+        st.stop()
 
-    # Predict
+    # Convert to tensor and predict
+    X_tensor = torch.FloatTensor(X_scaled)
     with torch.no_grad():
         y_scaled_pred = model(X_tensor).item()
         y_pred = scaler_y.inverse_transform([[y_scaled_pred]])[0][0]
 
     st.success(f"💰 Estimated House Price: ${y_pred:,.2f}")
+
 
